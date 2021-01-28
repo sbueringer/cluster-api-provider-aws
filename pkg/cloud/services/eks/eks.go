@@ -47,6 +47,13 @@ func (s *Service) ReconcileControlPlane(ctx context.Context) error {
 	}
 	conditions.MarkTrue(s.scope.ControlPlane, ekscontrolplanev1.EKSControlPlaneReadyCondition)
 
+	// EKS Addons
+	if err := s.reconcileAddons(ctx); err != nil {
+		conditions.MarkFalse(s.scope.ControlPlane, ekscontrolplanev1.EKSAddonsConfiguredCondition, ekscontrolplanev1.EKSAddonsConfiguredFailedReason, clusterv1.ConditionSeverityError, err.Error())
+		return errors.Wrap(err, "failed reconciling eks addons")
+	}
+	conditions.MarkTrue(s.scope.ControlPlane, ekscontrolplanev1.EKSAddonsConfiguredCondition)
+
 	s.scope.V(2).Info("Reconcile EKS control plane completed successfully")
 	return nil
 }
@@ -62,6 +69,11 @@ func (s *Service) DeleteControlPlane() (err error) {
 
 	// Control Plane IAM role
 	if err := s.deleteControlPlaneIAMRole(); err != nil {
+		return err
+	}
+
+	// OIDC Provider
+	if err := s.deleteOIDCProvider(); err != nil {
 		return err
 	}
 

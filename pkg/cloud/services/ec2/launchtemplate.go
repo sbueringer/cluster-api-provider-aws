@@ -214,7 +214,6 @@ func (s *Service) DeleteLaunchTemplate(id string) error {
 func (s *Service) SDKToLaunchTemplate(d *ec2.LaunchTemplateVersion) (*expinfrav1.AWSLaunchTemplate, error) {
 	v := d.LaunchTemplateData
 	i := &expinfrav1.AWSLaunchTemplate{
-		ID:   aws.StringValue(d.LaunchTemplateId),
 		Name: aws.StringValue(d.LaunchTemplateName),
 		AMI: infrav1.AWSResourceReference{
 			ID: v.ImageId,
@@ -296,29 +295,28 @@ func (s *Service) DiscoverLaunchTemplateAMI(scope *scope.MachinePoolScope) (*str
 	var lookupAMI string
 	var err error
 
-	if scope.IsEKSManaged() { // nolint:nestif
+	imageLookupFormat := lt.ImageLookupFormat
+	if imageLookupFormat == "" {
+		imageLookupFormat = scope.InfraCluster.ImageLookupFormat()
+	}
+
+	imageLookupOrg := lt.ImageLookupOrg
+	if imageLookupOrg == "" {
+		imageLookupOrg = scope.InfraCluster.ImageLookupOrg()
+	}
+
+	imageLookupBaseOS := lt.ImageLookupBaseOS
+	if imageLookupBaseOS == "" {
+		imageLookupBaseOS = scope.InfraCluster.ImageLookupBaseOS()
+	}
+
+	if scope.IsEKSManaged() && imageLookupFormat == "" && imageLookupOrg == "" && imageLookupBaseOS == "" {
 		lookupAMI, err = s.eksAMILookup(*scope.MachinePool.Spec.Template.Spec.Version)
 		if err != nil {
 			return nil, err
 		}
 	} else {
-
-		imageLookupFormat := lt.ImageLookupFormat
-		if imageLookupFormat == "" {
-			imageLookupFormat = scope.InfraCluster.ImageLookupFormat()
-		}
-
-		imageLookupOrg := lt.ImageLookupOrg
-		if imageLookupOrg == "" {
-			imageLookupOrg = scope.InfraCluster.ImageLookupOrg()
-		}
-
-		imageLookupBaseOS := lt.ImageLookupBaseOS
-		if imageLookupBaseOS == "" {
-			imageLookupBaseOS = scope.InfraCluster.ImageLookupBaseOS()
-		}
-
-		lookupAMI, err = s.defaultAMILookup(imageLookupFormat, imageLookupOrg, imageLookupBaseOS, *scope.MachinePool.Spec.Template.Spec.Version)
+		lookupAMI, err = s.defaultAMIIDLookup(imageLookupFormat, imageLookupOrg, imageLookupBaseOS, *scope.MachinePool.Spec.Template.Spec.Version)
 		if err != nil {
 			return nil, err
 		}

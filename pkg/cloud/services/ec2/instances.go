@@ -139,28 +139,28 @@ func (s *Service) CreateInstance(scope *scope.MachineScope, userData []byte) (*i
 			return nil, err
 		}
 
-		if scope.IsEKSManaged() {
+		imageLookupFormat := scope.AWSMachine.Spec.ImageLookupFormat
+		if imageLookupFormat == "" {
+			imageLookupFormat = scope.InfraCluster.ImageLookupFormat()
+		}
+
+		imageLookupOrg := scope.AWSMachine.Spec.ImageLookupOrg
+		if imageLookupOrg == "" {
+			imageLookupOrg = scope.InfraCluster.ImageLookupOrg()
+		}
+
+		imageLookupBaseOS := scope.AWSMachine.Spec.ImageLookupBaseOS
+		if imageLookupBaseOS == "" {
+			imageLookupBaseOS = scope.InfraCluster.ImageLookupBaseOS()
+		}
+
+		if scope.IsEKSManaged() && imageLookupFormat == "" && imageLookupOrg == "" && imageLookupBaseOS == "" {
 			input.ImageID, err = s.eksAMILookup(*scope.Machine.Spec.Version)
 			if err != nil {
 				return nil, err
 			}
 		} else {
-			imageLookupFormat := scope.AWSMachine.Spec.ImageLookupFormat
-			if imageLookupFormat == "" {
-				imageLookupFormat = scope.InfraCluster.ImageLookupFormat()
-			}
-
-			imageLookupOrg := scope.AWSMachine.Spec.ImageLookupOrg
-			if imageLookupOrg == "" {
-				imageLookupOrg = scope.InfraCluster.ImageLookupOrg()
-			}
-
-			imageLookupBaseOS := scope.AWSMachine.Spec.ImageLookupBaseOS
-			if imageLookupBaseOS == "" {
-				imageLookupBaseOS = scope.InfraCluster.ImageLookupBaseOS()
-			}
-
-			input.ImageID, err = s.defaultAMILookup(imageLookupFormat, imageLookupOrg, imageLookupBaseOS, *scope.Machine.Spec.Version)
+			input.ImageID, err = s.defaultAMIIDLookup(imageLookupFormat, imageLookupOrg, imageLookupBaseOS, *scope.Machine.Spec.Version)
 			if err != nil {
 				return nil, err
 			}

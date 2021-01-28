@@ -19,6 +19,12 @@ limitations under the License.
 package shared
 
 import (
+	"context"
+	"fmt"
+	"io/ioutil"
+	"os"
+	"path"
+	"path/filepath"
 	"strings"
 
 	. "github.com/onsi/ginkgo"
@@ -26,10 +32,14 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/client"
+	awscreds "github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	cfn "github.com/aws/aws-sdk-go/service/cloudformation"
 	"github.com/aws/aws-sdk-go/service/ec2"
+	"github.com/aws/aws-sdk-go/service/eks"
 	"github.com/aws/aws-sdk-go/service/iam"
+
+	"sigs.k8s.io/yaml"
 
 	cfn_bootstrap "sigs.k8s.io/cluster-api-provider-aws/cmd/clusterawsadm/cloudformation/bootstrap"
 	cloudformation "sigs.k8s.io/cluster-api-provider-aws/cmd/clusterawsadm/cloudformation/service"
@@ -38,13 +48,29 @@ import (
 )
 
 func NewAWSSession() client.ConfigProvider {
-	By("Getting an AWS IAM session")
+	By("Getting an AWS IAM session - from environment")
 	region, err := credentials.ResolveRegion("")
 	Expect(err).NotTo(HaveOccurred())
 	config := aws.NewConfig().WithCredentialsChainVerboseErrors(true).WithRegion(region)
 	sess, err := session.NewSessionWithOptions(session.Options{
 		SharedConfigState: session.SharedConfigEnable,
 		Config:            *config,
+	})
+	Expect(err).NotTo(HaveOccurred())
+	_, err = sess.Config.Credentials.Get()
+	Expect(err).NotTo(HaveOccurred())
+	return sess
+}
+
+func NewAWSSessionWithKey(accessKey *iam.AccessKey) client.ConfigProvider {
+	By("Getting an AWS IAM session - from access key")
+	region, err := credentials.ResolveRegion("")
+	Expect(err).NotTo(HaveOccurred())
+	config := aws.NewConfig().WithCredentialsChainVerboseErrors(true).WithRegion(region)
+	config.Credentials = awscreds.NewStaticCredentials(*accessKey.AccessKeyId, *accessKey.SecretAccessKey, "")
+
+	sess, err := session.NewSessionWithOptions(session.Options{
+		Config: *config,
 	})
 	Expect(err).NotTo(HaveOccurred())
 	_, err = sess.Config.Credentials.Get()
@@ -174,4 +200,55 @@ func GetAvailabilityZones(sess client.ConfigProvider) []*ec2.AvailabilityZone {
 	azs, err := ec2Client.DescribeAvailabilityZones(nil)
 	Expect(err).NotTo(HaveOccurred())
 	return azs.AvailabilityZones
+}
+
+func DumpEKSClusters(ctx context.Context, e2eCtx *E2EContext) {
+	logPath := filepath.Join(e2eCtx.Settings.ArtifactFolder, "clusters", e2eCtx.Environment.BootstrapClusterProxy.GetName(), "aws-resources")
+	if err := os.MkdirAll(logPath, os.ModePerm); err != nil {
+		fmt.Fprintf(GinkgoWriter, "couldn't create directory: path=%s, err=%s", logPath, err)
+	}
+	fmt.Fprintf(GinkgoWriter, "folder created for eks clusters: %s\n", logPath)
+
+	input := &eks.ListClustersInput{}
+	eksClient := eks.New(e2eCtx.BootstratpUserAWSSession)
+	output, err := eksClient.ListClusters(input)
+	if err != nil {
+		fmt.Fprintf(GinkgoWriter, "couldn't list EKS clusters: err=%s", err)
+		return
+	}
+
+	for _, clusterName := range output.Clusters {
+		describeInput := &eks.DescribeClusterInput{
+			Name: clusterName,
+		}
+		describeOutput, err := eksClient.DescribeCluster(describeInput)
+		if err != nil {
+			fmt.Fprintf(GinkgoWriter, "couldn't describe EKS clusters: name=%s err=%s", *clusterName, err)
+			continue
+		}
+		dumpEKSCluster(describeOutput.Cluster, logPath)
+	}
+
+}
+
+func dumpEKSCluster(cluster *eks.Cluster, logPath string) {
+	clusterYAML, err := yaml.Marshal(cluster)
+	if err != nil {
+		fmt.Fprintf(GinkgoWriter, "couldn't marshal cluster to yaml: name=%s err=%s", *cluster.Name, err)
+		return
+	}
+
+	fileName := fmt.Sprintf("%s.yaml", *cluster.Name)
+	clusterLog := path.Join(logPath, fileName)
+	f, err := os.OpenFile(clusterLog, os.O_APPEND|os.O_CREATE|os.O_WRONLY, os.ModePerm)
+	if err != nil {
+		fmt.Fprintf(GinkgoWriter, "couldn't open log file: name=%s err=%s", clusterLog, err)
+		return
+	}
+	defer f.Close()
+
+	if err := ioutil.WriteFile(f.Name(), clusterYAML, 0600); err != nil {
+		fmt.Fprintf(GinkgoWriter, "couldn't write cluster yaml to file: name=%s file=%s err=%s", *cluster.Name, f.Name(), err)
+		return
+	}
 }

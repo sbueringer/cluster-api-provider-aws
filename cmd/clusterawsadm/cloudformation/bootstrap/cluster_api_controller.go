@@ -119,6 +119,40 @@ func (t Template) controllersPolicy() *iamv1.PolicyDocument {
 				"elasticloadbalancing:RegisterInstancesWithLoadBalancer",
 				"elasticloadbalancing:DeregisterInstancesFromLoadBalancer",
 				"elasticloadbalancing:RemoveTags",
+				"autoscaling:DescribeAutoScalingGroups",
+				"autoscaling:DescribeInstanceRefreshes",
+				"ec2:CreateLaunchTemplate",
+				"ec2:CreateLaunchTemplateVersion",
+				"ec2:DescribeLaunchTemplates",
+				"ec2:DescribeLaunchTemplateVersions",
+				"ec2:DeleteLaunchTemplate",
+				"ec2:DeleteLaunchTemplateVersions",
+			},
+		},
+		{
+			Effect: iamv1.EffectAllow,
+			Resource: iamv1.Resources{
+				"arn:aws:autoscaling:*:*:autoScalingGroup:*:autoScalingGroupName/*",
+			},
+			Action: iamv1.Actions{
+				"autoscaling:CreateAutoScalingGroup",
+				"autoscaling:UpdateAutoScalingGroup",
+				"autoscaling:CreateOrUpdateTags",
+				"autoscaling:StartInstanceRefresh",
+				"autoscaling:DeleteAutoScalingGroup",
+				"autoscaling:DeleteTags",
+			},
+		},
+		{
+			Effect: iamv1.EffectAllow,
+			Resource: iamv1.Resources{
+				"arn:*:iam::*:role/aws-service-role/autoscaling.amazonaws.com/AWSServiceRoleForAutoScaling",
+			},
+			Action: iamv1.Actions{
+				"iam:CreateServiceLinkedRole",
+			},
+			Condition: iamv1.Conditions{
+				iamv1.StringLike: map[string]string{"iam:AWSServiceName": "autoscaling.amazonaws.com"},
 			},
 		},
 		{
@@ -196,6 +230,32 @@ func (t Template) controllersPolicy() *iamv1.PolicyDocument {
 			},
 		})
 
+		statement = append(statement, iamv1.StatementEntry{
+			Effect: iamv1.EffectAllow,
+			Action: iamv1.Actions{
+				"iam:CreateServiceLinkedRole",
+			},
+			Resource: iamv1.Resources{
+				"arn:aws:iam::*:role/aws-service-role/eks.amazonaws.com/AWSServiceRoleForAmazonEKS",
+			},
+			Condition: iamv1.Conditions{
+				iamv1.StringLike: map[string]string{"iam:AWSServiceName": "eks.amazonaws.com"},
+			},
+		})
+
+		statement = append(statement, iamv1.StatementEntry{
+			Effect: iamv1.EffectAllow,
+			Action: iamv1.Actions{
+				"iam:CreateServiceLinkedRole",
+			},
+			Resource: iamv1.Resources{
+				"arn:aws:iam::*:role/aws-service-role/eks-nodegroup.amazonaws.com/AWSServiceRoleForAmazonEKSNodegroup",
+			},
+			Condition: iamv1.Conditions{
+				iamv1.StringLike: map[string]string{"iam:AWSServiceName": "eks-nodegroup.amazonaws.com"},
+			},
+		})
+
 		if t.Spec.EKS.AllowIAMRoleCreation {
 			allowedIAMActions = append(allowedIAMActions, iamv1.Actions{
 				"iam:DetachRolePolicy",
@@ -204,6 +264,20 @@ func (t Template) controllersPolicy() *iamv1.PolicyDocument {
 				"iam:TagRole",
 				"iam:AttachRolePolicy",
 			}...)
+
+			statement = append(statement, iamv1.StatementEntry{
+				Action: iamv1.Actions{
+					"iam:ListOpenIDConnectProviders",
+					"iam:CreateOpenIDConnectProvider",
+					"iam:AddClientIDToOpenIDConnectProvider",
+					"iam:UpdateOpenIDConnectProviderThumbprint",
+					"iam:DeleteOpenIDConnectProvider",
+				},
+				Resource: iamv1.Resources{
+					"*",
+				},
+				Effect: iamv1.EffectAllow,
+			})
 		}
 		statement = append(statement, []iamv1.StatementEntry{
 			{
@@ -243,6 +317,20 @@ func (t Template) controllersPolicy() *iamv1.PolicyDocument {
 				Effect: iamv1.EffectAllow,
 			}, {
 				Action: iamv1.Actions{
+					"eks:ListAddons",
+					"eks:CreateAddon",
+					"eks:DescribeAddonVersions",
+					"eks:DescribeAddon",
+					"eks:DeleteAddon",
+					"eks:UpdateAddon",
+					"eks:TagResource",
+				},
+				Resource: iamv1.Resources{
+					"*",
+				},
+				Effect: iamv1.EffectAllow,
+			}, {
+				Action: iamv1.Actions{
 					"iam:PassRole",
 				},
 				Resource: iamv1.Resources{
@@ -256,6 +344,7 @@ func (t Template) controllersPolicy() *iamv1.PolicyDocument {
 				Effect: iamv1.EffectAllow,
 			},
 		}...)
+
 	}
 
 	return &iamv1.PolicyDocument{

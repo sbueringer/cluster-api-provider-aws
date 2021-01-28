@@ -168,7 +168,6 @@ type CloudInit struct {
 	// Parameter Storage to distribute secrets. By default or with the value of secrets-manager,
 	// will use AWS Secrets Manager instead.
 	// +optional
-	// +kubebuilder:default=secrets-manager
 	// +kubebuilder:validation:Enum=secrets-manager;ssm-parameter-store
 	SecureSecretsBackend SecretBackend `json:"secureSecretsBackend,omitempty"`
 }
@@ -178,6 +177,11 @@ type AWSMachineStatus struct {
 	// Ready is true when the provider resource is ready.
 	// +optional
 	Ready bool `json:"ready"`
+
+	// Interruptible reports that this machine is using spot instances and can therefore be interrupted by CAPI when it receives a notice that the spot instance is to be terminated by AWS.
+	// This will be set to true when SpotMarketOptions is not nil (i.e. this machine is using a spot instance).
+	// +optional
+	Interruptible bool `json:"interruptible,omitempty"`
 
 	// Addresses contains the AWS instance associated addresses.
 	Addresses []clusterv1.MachineAddress `json:"addresses,omitempty"`

@@ -188,7 +188,7 @@ func (r *AWSMachinePoolReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-func (r *AWSMachinePoolReconciler) reconcileNormal(_ context.Context, machinePoolScope *scope.MachinePoolScope, clusterScope cloud.ClusterScoper, ec2Scope scope.EC2Scope) (ctrl.Result, error) {
+func (r *AWSMachinePoolReconciler) reconcileNormal(ctx context.Context, machinePoolScope *scope.MachinePoolScope, clusterScope cloud.ClusterScoper, ec2Scope scope.EC2Scope) (ctrl.Result, error) {
 	clusterScope.Info("Reconciling AWSMachinePool")
 
 	// If the AWSMachine is in an error state, return early.
@@ -274,6 +274,11 @@ func (r *AWSMachinePoolReconciler) reconcileNormal(_ context.Context, machinePoo
 	machinePoolScope.AWSMachinePool.Status.Ready = true
 	conditions.MarkTrue(machinePoolScope.AWSMachinePool, infrav1exp.ASGReadyCondition)
 
+	err = machinePoolScope.UpdateInstanceStatuses(ctx, asg.Instances)
+	if err != nil {
+		machinePoolScope.Info("Failed updating instances", "instances", asg.Instances)
+	}
+
 	return ctrl.Result{}, nil
 }
 
@@ -309,7 +314,8 @@ func (r *AWSMachinePoolReconciler) reconcileDelete(machinePoolScope *scope.Machi
 		}
 	}
 
-	launchTemplate, err := ec2Svc.GetLaunchTemplate(machinePoolScope.AWSMachinePool.Status.LaunchTemplateID)
+	launchTemplateID := machinePoolScope.AWSMachinePool.Status.LaunchTemplateID
+	launchTemplate, err := ec2Svc.GetLaunchTemplate(launchTemplateID)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -322,7 +328,7 @@ func (r *AWSMachinePoolReconciler) reconcileDelete(machinePoolScope *scope.Machi
 	}
 
 	machinePoolScope.Info("deleting launch template", "name", launchTemplate.Name)
-	if err := ec2Svc.DeleteLaunchTemplate(launchTemplate.ID); err != nil {
+	if err := ec2Svc.DeleteLaunchTemplate(launchTemplateID); err != nil {
 		r.Recorder.Eventf(machinePoolScope.AWSMachinePool, corev1.EventTypeWarning, "FailedDelete", "Failed to delete launch template %q: %v", launchTemplate.Name, err)
 		return ctrl.Result{}, errors.Wrap(err, "failed to delete ASG")
 	}
@@ -420,6 +426,21 @@ func (r *AWSMachinePoolReconciler) reconcileLaunchTemplate(machinePoolScope *sco
 		return err
 	}
 
+	// If there is a change: before changing the template, check if there exist an ongoing instance refresh,
+	// because only 1 instance refresh can be "InProgress". If template is updated when refresh cannot be started,
+	// that change will not trigger a refresh.
+	if needsUpdate || tagsChanged || *imageID != *launchTemplate.AMI.ID {
+		asgSvc := r.getASGService(ec2Scope)
+		canStart, err := asgSvc.CanStartASGInstanceRefresh(machinePoolScope)
+		if err != nil {
+			return err
+		}
+		if !canStart {
+			conditions.MarkFalse(machinePoolScope.AWSMachinePool, infrav1exp.InstanceRefreshStartedCondition, infrav1exp.InstanceRefreshNotReadyReason, clusterv1.ConditionSeverityWarning, "")
+			return errors.New("Cannot start a new instance refresh. Unfinished instance refresh exist")
+		}
+	}
+
 	// create a new launch template version if there's a difference in configuration, tags,
 	// OR we've discovered a new AMI ID
 	if needsUpdate || tagsChanged || *imageID != *launchTemplate.AMI.ID {
@@ -427,6 +448,17 @@ func (r *AWSMachinePoolReconciler) reconcileLaunchTemplate(machinePoolScope *sco
 		if err := ec2svc.CreateLaunchTemplateVersion(machinePoolScope, imageID, userData); err != nil {
 			return err
 		}
+		machinePoolScope.Info("starting instance refresh", "number of instances", machinePoolScope.MachinePool.Spec.Replicas)
+
+		asgSvc := r.getASGService(ec2Scope)
+		// After creating a new version of launch template, instance refresh is required
+		// to trigger a rolling replacement of all previously launched instances.
+
+		if err := asgSvc.StartASGInstanceRefresh(machinePoolScope); err != nil {
+			conditions.MarkFalse(machinePoolScope.AWSMachinePool, infrav1exp.InstanceRefreshStartedCondition, infrav1exp.InstanceRefreshFailedReason, clusterv1.ConditionSeverityError, err.Error())
+			return err
+		}
+		conditions.MarkTrue(machinePoolScope.AWSMachinePool, infrav1exp.InstanceRefreshStartedCondition)
 	}
 	return nil
 }

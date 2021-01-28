@@ -38,6 +38,11 @@ type AWSManagedControlPlaneSpec struct {
 	// NetworkSpec encapsulates all things related to AWS network.
 	NetworkSpec infrav1.NetworkSpec `json:"networkSpec,omitempty"`
 
+	// SecondaryCidrBlock is the additional CIDR range to use for pod IPs.
+	// Must be within the 100.64.0.0/10 or 198.19.0.0/16 range.
+	// +optional
+	SecondaryCidrBlock *string `json:"secondaryCidrBlock,omitempty"`
+
 	// The AWS Region the cluster lives in.
 	Region string `json:"region,omitempty"`
 
@@ -134,6 +139,15 @@ type AWSManagedControlPlaneSpec struct {
 	// +kubebuilder:default=iam-authenticator
 	// +kubebuilder:validation:Enum=iam-authenticator;aws-cli
 	TokenMethod *EKSTokenMethod `json:"tokenMethod,omitempty"`
+
+	// AssociateOIDCProvider can be enabled to automatically create an identity
+	// provider for the controller for use with IAM roles for service accounts
+	// +kubebuilder:default=false
+	AssociateOIDCProvider bool `json:"associateOIDCProvider,omitempty"`
+
+	// Addons defines the EKS addons to enable with the EKS cluster.
+	// +optional
+	Addons *[]Addon `json:"addons,omitempty"`
 }
 
 // EndpointAccess specifies how control plane endpoints are accessible
@@ -157,6 +171,14 @@ type EncryptionConfig struct {
 	Resources []*string `json:"resources,omitempty"`
 }
 
+// OIDCProviderStatus holds the status of the AWS OIDC identity provider
+type OIDCProviderStatus struct {
+	// ARN holds the ARN of the provider
+	ARN string `json:"arn,omitempty"`
+	// TrustPolicy contains the boilerplate IAM trust policy to use for IRSA
+	TrustPolicy string `json:"trustPolicy,omitempty"`
+}
+
 // AWSManagedControlPlaneStatus defines the observed state of AWSManagedControlPlane
 type AWSManagedControlPlaneStatus struct {
 	// Networks holds details about the AWS networking resources used by the control plane
@@ -168,6 +190,9 @@ type AWSManagedControlPlaneStatus struct {
 	// Bastion holds details of the instance that is used as a bastion jump box
 	// +optional
 	Bastion *infrav1.Instance `json:"bastion,omitempty"`
+	// OIDCProvider holds the status of the identity provider for this cluster
+	// +optional
+	OIDCProvider OIDCProviderStatus `json:"oidcProvider,omitempty"`
 	// ExternalManagedControlPlane indicates to cluster-api that the control plane
 	// is managed by an external service such as AKS, EKS, GKE, etc.
 	// +kubebuilder:default=true
@@ -186,6 +211,9 @@ type AWSManagedControlPlaneStatus struct {
 	FailureMessage *string `json:"failureMessage,omitempty"`
 	// Conditions specifies the cpnditions for the managed control plane
 	Conditions clusterv1.Conditions `json:"conditions,omitempty"`
+	// Addons holds the current status of the EKS addons
+	// +optional
+	Addons []*AddonState `json:"addons,omitempty"`
 }
 
 // +kubebuilder:object:root=true

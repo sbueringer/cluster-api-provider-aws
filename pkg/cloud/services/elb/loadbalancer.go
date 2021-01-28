@@ -22,10 +22,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aws/aws-sdk-go/service/ec2"
-
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
+	"github.com/aws/aws-sdk-go/service/ec2"
 	"github.com/aws/aws-sdk-go/service/elb"
 	rgapi "github.com/aws/aws-sdk-go/service/resourcegroupstaggingapi"
 	"github.com/pkg/errors"
@@ -110,19 +109,6 @@ func (s *Service) ReconcileLoadbalancers() error {
 
 	s.scope.V(2).Info("Reconcile load balancers completed successfully")
 	return nil
-}
-
-// GetAPIServerDNSName returns the DNS name endpoint for the API server
-func (s *Service) GetAPIServerDNSName() (string, error) {
-	elbName, err := GenerateELBName(s.scope.Name())
-	if err != nil {
-		return "", err
-	}
-	apiELB, err := s.describeClassicELB(elbName)
-	if err != nil {
-		return "", err
-	}
-	return apiELB.DNSName, nil
 }
 
 // DeleteLoadbalancers deletes the load balancers for the given cluster.
@@ -594,6 +580,14 @@ func (s *Service) describeClassicELB(name string) (*infrav1.ClassicELB, error) {
 		return nil, errors.Errorf(
 			"ELB names must be unique within a region: %q ELB already exists in this region in VPC %q",
 			name, *out.LoadBalancerDescriptions[0].VPCId)
+	}
+
+	if s.scope.ControlPlaneLoadBalancer() != nil &&
+		s.scope.ControlPlaneLoadBalancer().Scheme != nil &&
+		string(*s.scope.ControlPlaneLoadBalancer().Scheme) != aws.StringValue(out.LoadBalancerDescriptions[0].Scheme) {
+		return nil, errors.Errorf(
+			"ELB names must be unique within a region: %q ELB already exists in this region with a different scheme %q",
+			name, *out.LoadBalancerDescriptions[0].Scheme)
 	}
 
 	outAtt, err := s.ELBClient.DescribeLoadBalancerAttributes(&elb.DescribeLoadBalancerAttributesInput{

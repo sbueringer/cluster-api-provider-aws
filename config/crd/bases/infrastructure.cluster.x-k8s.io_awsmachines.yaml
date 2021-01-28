@@ -324,7 +324,6 @@ spec:
                     description: SecretPrefix is the prefix for the secret name. This is stored temporarily, and deleted when the machine registers as a node against the workload cluster.
                     type: string
                   secureSecretsBackend:
-                    default: secrets-manager
                     description: SecureSecretsBackend, when set to parameter-store will utilize the AWS Systems Manager Parameter Storage to distribute secrets. By default or with the value of secrets-manager, will use AWS Secrets Manager instead.
                     enum:
                     - secrets-manager
@@ -524,6 +523,9 @@ spec:
               instanceState:
                 description: InstanceState is the state of the AWS instance for this machine.
                 type: string
+              interruptible:
+                description: Interruptible reports that this machine is using spot instances and can therefore be interrupted by CAPI when it receives a notice that the spot instance is to be terminated by AWS. This will be set to true when SpotMarketOptions is not nil (i.e. this machine is using a spot instance).
+                type: boolean
               ready:
                 description: Ready is true when the provider resource is ready.
                 type: boolean

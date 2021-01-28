@@ -17,11 +17,12 @@ limitations under the License.
 package v1alpha3
 
 import (
+	"context"
 	"strings"
 	"testing"
 
 	. "github.com/onsi/gomega"
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	infrav1 "sigs.k8s.io/cluster-api-provider-aws/api/v1alpha3"
 )
@@ -36,7 +37,13 @@ func TestDefaultingWebhook(t *testing.T) {
 	defaultTestBastion := infrav1.Bastion{
 		AllowedCIDRBlocks: []string{"0.0.0.0/0"},
 	}
+	AZUsageLimit := 3
+	defaultVPCSpec := infrav1.VPCSpec{
+		AvailabilityZoneUsageLimit: &AZUsageLimit,
+		AvailabilityZoneSelection:  &infrav1.AZSelectionSchemeOrdered,
+	}
 	defaultNetworkSpec := infrav1.NetworkSpec{
+		VPC: defaultVPCSpec,
 		CNI: &infrav1.CNISpec{
 			CNIIngressRules: []*infrav1.CNIIngressRule{
 				{
@@ -69,21 +76,21 @@ func TestDefaultingWebhook(t *testing.T) {
 			resourceName: "cluster1",
 			resourceNS:   "default",
 			expectHash:   false,
-			expectSpec:   AWSManagedControlPlaneSpec{EKSClusterName: "default_cluster1", Bastion: defaultTestBastion, NetworkSpec: defaultNetworkSpec},
+			expectSpec:   AWSManagedControlPlaneSpec{EKSClusterName: "default_cluster1", Bastion: defaultTestBastion, NetworkSpec: defaultNetworkSpec, TokenMethod: &EKSTokenMethodIAMAuthenticator},
 		},
 		{
 			name:         "less than 100 chars, dot in name",
 			resourceName: "team1.cluster1",
 			resourceNS:   "default",
 			expectHash:   false,
-			expectSpec:   AWSManagedControlPlaneSpec{EKSClusterName: "default_team1_cluster1", Bastion: defaultTestBastion, NetworkSpec: defaultNetworkSpec},
+			expectSpec:   AWSManagedControlPlaneSpec{EKSClusterName: "default_team1_cluster1", Bastion: defaultTestBastion, NetworkSpec: defaultNetworkSpec, TokenMethod: &EKSTokenMethodIAMAuthenticator},
 		},
 		{
 			name:         "more than 100 chars",
-			resourceName: "ABCDEABCDEABCDEABCDEABCDEABCDEABCDEABCDEABCDEABCDEABCDEABCDEABCDEABCDEABCDEABCDEABCDEABCDEABCDEABCDE",
+			resourceName: "abcdeabcdeabcdeabcdeabcdeabcdeabcdeabcdeabcdeabcdeabcdeabcdeabcdeabcdeabcdeabcdeabcdeabcdeabcdeabcde",
 			resourceNS:   "default",
 			expectHash:   true,
-			expectSpec:   AWSManagedControlPlaneSpec{EKSClusterName: "capi_", Bastion: defaultTestBastion, NetworkSpec: defaultNetworkSpec},
+			expectSpec:   AWSManagedControlPlaneSpec{EKSClusterName: "capi_", Bastion: defaultTestBastion, NetworkSpec: defaultNetworkSpec, TokenMethod: &EKSTokenMethodIAMAuthenticator},
 		},
 		{
 			name:         "with patch",
@@ -91,7 +98,7 @@ func TestDefaultingWebhook(t *testing.T) {
 			resourceNS:   "default",
 			expectHash:   false,
 			spec:         AWSManagedControlPlaneSpec{Version: &vV1_17_1},
-			expectSpec:   AWSManagedControlPlaneSpec{EKSClusterName: "default_cluster1", Version: &vV1_17, Bastion: defaultTestBastion, NetworkSpec: defaultNetworkSpec},
+			expectSpec:   AWSManagedControlPlaneSpec{EKSClusterName: "default_cluster1", Version: &vV1_17, Bastion: defaultTestBastion, NetworkSpec: defaultNetworkSpec, TokenMethod: &EKSTokenMethodIAMAuthenticator},
 		},
 		{
 			name:         "with allowed ip on bastion",
@@ -99,7 +106,7 @@ func TestDefaultingWebhook(t *testing.T) {
 			resourceNS:   "default",
 			expectHash:   false,
 			spec:         AWSManagedControlPlaneSpec{Bastion: infrav1.Bastion{AllowedCIDRBlocks: []string{"100.100.100.100/0"}}},
-			expectSpec:   AWSManagedControlPlaneSpec{EKSClusterName: "default_cluster1", Bastion: infrav1.Bastion{AllowedCIDRBlocks: []string{"100.100.100.100/0"}}, NetworkSpec: defaultNetworkSpec},
+			expectSpec:   AWSManagedControlPlaneSpec{EKSClusterName: "default_cluster1", Bastion: infrav1.Bastion{AllowedCIDRBlocks: []string{"100.100.100.100/0"}}, NetworkSpec: defaultNetworkSpec, TokenMethod: &EKSTokenMethodIAMAuthenticator},
 		},
 		{
 			name:         "with CNI on network",
@@ -107,22 +114,35 @@ func TestDefaultingWebhook(t *testing.T) {
 			resourceNS:   "default",
 			expectHash:   false,
 			spec:         AWSManagedControlPlaneSpec{NetworkSpec: infrav1.NetworkSpec{CNI: &infrav1.CNISpec{}}},
-			expectSpec:   AWSManagedControlPlaneSpec{EKSClusterName: "default_cluster1", Bastion: defaultTestBastion, NetworkSpec: infrav1.NetworkSpec{CNI: &infrav1.CNISpec{}}},
+			expectSpec:   AWSManagedControlPlaneSpec{EKSClusterName: "default_cluster1", Bastion: defaultTestBastion, NetworkSpec: infrav1.NetworkSpec{CNI: &infrav1.CNISpec{}, VPC: defaultVPCSpec}, TokenMethod: &EKSTokenMethodIAMAuthenticator},
+		},
+		{
+			name:         "secondary CIDR",
+			resourceName: "cluster1",
+			resourceNS:   "default",
+			expectHash:   false,
+			expectSpec:   AWSManagedControlPlaneSpec{EKSClusterName: "default_cluster1", Bastion: defaultTestBastion, NetworkSpec: defaultNetworkSpec, SecondaryCidrBlock: nil, TokenMethod: &EKSTokenMethodIAMAuthenticator},
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.TODO()
 			g := NewWithT(t)
 
 			mcp := &AWSManagedControlPlane{
-				ObjectMeta: v1.ObjectMeta{
+				ObjectMeta: metav1.ObjectMeta{
 					Name:      tc.resourceName,
 					Namespace: tc.resourceNS,
 				},
 			}
 			mcp.Spec = tc.spec
-			mcp.Default()
+
+			g.Expect(testEnv.Create(ctx, mcp)).To(Succeed())
+
+			defer func() {
+				testEnv.Delete(ctx, mcp)
+			}()
 
 			g.Expect(mcp.Spec.EKSClusterName).ToNot(BeEmpty())
 
@@ -136,36 +156,59 @@ func TestDefaultingWebhook(t *testing.T) {
 	}
 }
 
-func TestValidatingWebhookCreate(t *testing.T) {
+func TestWebhookCreate(t *testing.T) {
 	tests := []struct {
 		name           string
 		eksClusterName string
 		expectError    bool
 		eksVersion     string
+		hasAddon       bool
 	}{
 		{
 			name:           "ekscluster specified",
 			eksClusterName: "default_cluster1",
 			expectError:    false,
+			hasAddon:       false,
 		},
 		{
 			name:           "ekscluster NOT specified",
 			eksClusterName: "",
-			expectError:    true,
+			expectError:    false,
+			hasAddon:       false,
 		},
 		{
 			name:           "invalid version",
 			eksClusterName: "default_cluster1",
 			eksVersion:     "v1.x17",
 			expectError:    true,
+			hasAddon:       false,
+		},
+		{
+			name:           "addon with allowed k8s version",
+			eksClusterName: "default_cluster1",
+			eksVersion:     "v1.18",
+			expectError:    false,
+			hasAddon:       true,
+		},
+		{
+			name:           "addon with not allowed k8s version",
+			eksClusterName: "default_cluster1",
+			eksVersion:     "v1.17",
+			expectError:    true,
+			hasAddon:       true,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.TODO()
 			g := NewWithT(t)
 
 			mcp := &AWSManagedControlPlane{
+				ObjectMeta: metav1.ObjectMeta{
+					GenerateName: "mcp-",
+					Namespace:    "default",
+				},
 				Spec: AWSManagedControlPlaneSpec{
 					EKSClusterName: tc.eksClusterName,
 				},
@@ -173,7 +216,16 @@ func TestValidatingWebhookCreate(t *testing.T) {
 			if tc.eksVersion != "" {
 				mcp.Spec.Version = &tc.eksVersion
 			}
-			err := mcp.ValidateCreate()
+			if tc.hasAddon {
+				testAddons := []Addon{
+					{
+						Name:    "test addon",
+						Version: "v1.0.0",
+					},
+				}
+				mcp.Spec.Addons = &testAddons
+			}
+			err := testEnv.Create(ctx, mcp)
 
 			if tc.expectError {
 				g.Expect(err).ToNot(BeNil())
@@ -184,7 +236,7 @@ func TestValidatingWebhookCreate(t *testing.T) {
 	}
 }
 
-func TestValidatingWebhookUpdate(t *testing.T) {
+func TestWebhookUpdate(t *testing.T) {
 	tests := []struct {
 		name           string
 		oldClusterSpec AWSManagedControlPlaneSpec
@@ -266,13 +318,153 @@ func TestValidatingWebhookUpdate(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			g := NewWithT(t)
-
-			newMCP := &AWSManagedControlPlane{
-				Spec: tc.newClusterSpec,
-			}
-			oldMCP := &AWSManagedControlPlane{
+			ctx := context.TODO()
+			mcp := &AWSManagedControlPlane{
+				ObjectMeta: metav1.ObjectMeta{
+					GenerateName: "mcp-",
+					Namespace:    "default",
+				},
 				Spec: tc.oldClusterSpec,
 			}
+			g.Expect(testEnv.Create(ctx, mcp)).To(Succeed())
+			mcp.Spec = tc.newClusterSpec
+			err := testEnv.Update(ctx, mcp)
+
+			if tc.expectError {
+				g.Expect(err).ToNot(BeNil())
+			} else {
+				g.Expect(err).To(BeNil())
+			}
+		})
+	}
+}
+
+func TestValidatingWebhookCreate_SecondaryCidr(t *testing.T) {
+	tests := []struct {
+		name        string
+		expectError bool
+		cidrRange   string
+	}{
+		{
+			name:        "complete range 1",
+			cidrRange:   "100.64.0.0/10",
+			expectError: true,
+		},
+		{
+			name:        "complete range 2",
+			cidrRange:   "198.19.0.0/16",
+			expectError: false,
+		},
+		{
+			name:        "subrange",
+			cidrRange:   "100.67.0.0/16",
+			expectError: false,
+		},
+		{
+			name:        "invalid value",
+			cidrRange:   "not a cidr range",
+			expectError: true,
+		},
+		{
+			name:        "unsupported range",
+			cidrRange:   "10.0.0.1/20",
+			expectError: true,
+		},
+		{
+			name:        "too large",
+			cidrRange:   "100.64.0.0/15",
+			expectError: true,
+		},
+		{
+			name:        "too small",
+			cidrRange:   "100.64.0.0/29",
+			expectError: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			g := NewWithT(t)
+
+			mcp := &AWSManagedControlPlane{
+				Spec: AWSManagedControlPlaneSpec{
+					EKSClusterName: "default_cluster1",
+				},
+			}
+			if tc.cidrRange != "" {
+				mcp.Spec.SecondaryCidrBlock = &tc.cidrRange
+			}
+			err := mcp.ValidateCreate()
+
+			if tc.expectError {
+				g.Expect(err).ToNot(BeNil())
+			} else {
+				g.Expect(err).To(BeNil())
+			}
+		})
+	}
+}
+
+func TestValidatingWebhookUpdate_SecondaryCidr(t *testing.T) {
+	tests := []struct {
+		name        string
+		cidrRange   string
+		expectError bool
+	}{
+		{
+			name:        "complete range 1",
+			cidrRange:   "100.64.0.0/10",
+			expectError: true,
+		},
+		{
+			name:        "complete range 2",
+			cidrRange:   "198.19.0.0/16",
+			expectError: false,
+		},
+		{
+			name:        "subrange",
+			cidrRange:   "100.67.0.0/16",
+			expectError: false,
+		},
+		{
+			name:        "invalid value",
+			cidrRange:   "not a cidr range",
+			expectError: true,
+		},
+		{
+			name:        "unsupported range",
+			cidrRange:   "10.0.0.1/20",
+			expectError: true,
+		},
+		{
+			name:        "too large",
+			cidrRange:   "100.64.0.0/15",
+			expectError: true,
+		},
+		{
+			name:        "too small",
+			cidrRange:   "100.64.0.0/29",
+			expectError: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			g := NewWithT(t)
+
+			newMCP := &AWSManagedControlPlane{
+				Spec: AWSManagedControlPlaneSpec{
+					EKSClusterName:     "default_cluster1",
+					SecondaryCidrBlock: &tc.cidrRange,
+				},
+			}
+			oldMCP := &AWSManagedControlPlane{
+				Spec: AWSManagedControlPlaneSpec{
+					EKSClusterName:     "default_cluster1",
+					SecondaryCidrBlock: nil,
+				},
+			}
+
 			err := newMCP.ValidateUpdate(oldMCP)
 
 			if tc.expectError {
