@@ -2550,6 +2550,9 @@ spec:
                           type: object
                       type: object
                     type: array
+                    x-kubernetes-list-map-keys:
+                    - id
+                    x-kubernetes-list-type: map
                   vpc:
                     description: VPC configuration.
                     properties:
