@@ -153,7 +153,9 @@ type NetworkSpec struct {
 
 	// Subnets configuration.
 	// +optional
-	Subnets Subnets `json:"subnets,omitempty"`
+	// +listType=map
+	// +listMapKey=id
+	Subnets []SubnetSpec `json:"subnets,omitempty"`
 
 	// CNI configuration
 	// +optional
